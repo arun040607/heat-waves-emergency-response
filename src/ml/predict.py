@@ -1,8 +1,38 @@
+import os
 import joblib
 import pandas as pd
 
 
-MODEL_PATH = "models/rf_model.pkl"
+# ============================================================
+# MODEL PATH
+# ============================================================
+
+# Project root:
+# heat-waves-emergency-response/
+# ├── models/
+# │   └── rf_model.pkl
+# └── src/
+#     └── ml/
+#         └── predict.py
+
+CURRENT_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
+PROJECT_ROOT = os.path.abspath(
+    os.path.join(CURRENT_DIR, "..", "..")
+)
+
+MODEL_PATH = os.path.join(
+    PROJECT_ROOT,
+    "models",
+    "rf_model.pkl"
+)
+
+
+# ============================================================
+# MODEL FEATURES
+# ============================================================
 
 FEATURES = [
     "temperature",
@@ -16,6 +46,10 @@ FEATURES = [
 ]
 
 
+# ============================================================
+# RISK LABELS
+# ============================================================
+
 RISK_LABELS = {
     0: "LOW",
     1: "MEDIUM",
@@ -24,10 +58,26 @@ RISK_LABELS = {
 }
 
 
+# ============================================================
+# LOAD MODEL
+# ============================================================
+
 def load_model():
-    """Load the trained Random Forest model."""
+    """
+    Load the trained Random Forest model.
+    """
+
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(
+            f"Model not found at: {MODEL_PATH}"
+        )
+
     return joblib.load(MODEL_PATH)
 
+
+# ============================================================
+# PREDICT ONE ZONE
+# ============================================================
 
 def predict_zone(zone_data):
     """
@@ -41,43 +91,112 @@ def predict_zone(zone_data):
     Returns
     -------
     dict
-        Risk class, probability and class probabilities.
+        Risk class, label, confidence and probabilities.
     """
 
     model = load_model()
 
-    # Convert input dictionary into DataFrame
     input_data = pd.DataFrame(
         [zone_data],
         columns=FEATURES
     )
 
-    # Prediction
     prediction = model.predict(input_data)[0]
 
-    # Probability
     probabilities = model.predict_proba(input_data)[0]
 
     classes = model.classes_
 
     probability_map = {
-        int(cls): float(prob)
-        for cls, prob in zip(classes, probabilities)
+        RISK_LABELS.get(
+            int(cls),
+            str(cls)
+        ): round(
+            float(prob),
+            4
+        )
+        for cls, prob in zip(
+            classes,
+            probabilities
+        )
     }
 
     confidence = max(probabilities)
 
     return {
         "risk_class": int(prediction),
+
         "risk_label": RISK_LABELS.get(
             int(prediction),
             "UNKNOWN"
         ),
+
         "confidence": round(
             float(confidence),
             4
         ),
-        "probabilities": {
+
+        "probabilities": probability_map
+    }
+
+
+# ============================================================
+# PREDICT MULTIPLE ZONES
+# ============================================================
+
+def predict_zones(df):
+    """
+    Predict heatwave risk for multiple zones.
+
+    The Random Forest model is loaded once and all zones
+    are predicted in a single batch.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing the eight model features.
+
+    Returns
+    -------
+    list
+        Prediction result for every zone.
+    """
+
+    model = load_model()
+
+    # Make sure all required features exist
+    missing_features = [
+        feature
+        for feature in FEATURES
+        if feature not in df.columns
+    ]
+
+    if missing_features:
+        raise ValueError(
+            f"Missing model features: {missing_features}"
+        )
+
+    input_data = df[FEATURES].copy()
+
+    # Predict all zones at once
+    predictions = model.predict(
+        input_data
+    )
+
+    probabilities = model.predict_proba(
+        input_data
+    )
+
+    classes = model.classes_
+
+    results = []
+
+    for prediction, probs in zip(
+        predictions,
+        probabilities
+    ):
+
+        probability_map = {
             RISK_LABELS.get(
                 int(cls),
                 str(cls)
@@ -87,14 +206,42 @@ def predict_zone(zone_data):
             )
             for cls, prob in zip(
                 classes,
-                probabilities
+                probs
             )
         }
-    }
+
+        confidence = max(probs)
+
+        results.append({
+
+            "risk_class": int(
+                prediction
+            ),
+
+            "risk_label": RISK_LABELS.get(
+                int(prediction),
+                "UNKNOWN"
+            ),
+
+            "confidence": round(
+                float(confidence),
+                4
+            ),
+
+            "probabilities": probability_map
+
+        })
+
+    return results
+
+
+# ============================================================
+# EXPLAIN ONE ZONE
+# ============================================================
+
 def explain_zone(zone_data):
     """
-    Generate a simple human-readable explanation
-    of the main heat-risk factors.
+    Generate human-readable heat-risk factors.
     """
 
     factors = []
@@ -136,6 +283,11 @@ def explain_zone(zone_data):
 
     return factors
 
+
+# ============================================================
+# TEST SINGLE ZONE
+# ============================================================
+
 if __name__ == "__main__":
 
     example_zone = {
@@ -149,24 +301,41 @@ if __name__ == "__main__":
         "hospital_capacity": 42
     }
 
-    result = predict_zone(example_zone)
+    result = predict_zone(
+        example_zone
+    )
 
     print("\nHEATWAVE RISK PREDICTION")
     print("=" * 40)
 
-    print(f"Risk: {result['risk_label']}")
-    print(f"Confidence: {result['confidence']:.2%}")
+    print(
+        f"Risk: {result['risk_label']}"
+    )
+
+    print(
+        f"Confidence: "
+        f"{result['confidence']:.2%}"
+    )
 
     print("\nProbabilities:")
 
-    for label, probability in result["probabilities"].items():
+    for label, probability in result[
+        "probabilities"
+    ].items():
+
         print(
-            f"  {label}: {probability:.2%}"
+            f"  {label}: "
+            f"{probability:.2%}"
         )
 
     print("\nCONTRIBUTING FACTORS:")
 
-    factors = explain_zone(example_zone)
+    factors = explain_zone(
+        example_zone
+    )
 
     for factor in factors:
-        print(f"  - {factor}")
+
+        print(
+            f"  - {factor}"
+        )
